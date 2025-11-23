@@ -134,47 +134,6 @@ code {
   color: #f8fafc;
 }
 
-.logs {
-  background: rgba(2, 6, 23, 0.55);
-  border-radius: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  overflow: hidden;
-}
-
-.logs-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
-  font-weight: 700;
-}
-
-.badge {
-  background: rgba(125, 211, 252, 0.2);
-  color: #7dd3fc;
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-size: 12px;
-}
-
-.logs-body {
-  max-height: 240px;
-  overflow: auto;
-  padding: 12px;
-}
-
-.log-line {
-  margin: 0 0 8px;
-  font-size: 14px;
-  color: #e2e8f0;
-}
-
-.empty {
-  margin: 0;
-  color: #94a3b8;
-}
-
 .help {
   margin-top: 18px;
   display: grid;
@@ -196,6 +155,45 @@ code {
   margin: 0;
   color: #cbd5e1;
   line-height: 1.5;
+}
+
+.stealth-config {
+  margin-top: 10px;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  opacity: 0.7;
+}
+
+.stealth-btn {
+  background: none;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #cbd5e1;
+  padding: 6px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: opacity 120ms ease, border-color 120ms ease;
+}
+
+.stealth-btn:hover {
+  opacity: 1;
+  border-color: rgba(125, 211, 252, 0.6);
+}
+
+.stealth-form {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.stealth-input {
+  background: rgba(15, 23, 42, 0.5);
+  color: #e2e8f0;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
 }
 
 @media (max-width: 600px) {

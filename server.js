@@ -1,13 +1,28 @@
-const path = require('path');
-const express = require('express');
-const { createServer } = require('http');
-const WebSocket = require('ws');
+import fs from 'fs';
+import path from 'path';
+import express from 'express';
+import { createServer } from 'http';
+import WebSocket from 'ws';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = process.env.PORT || 3000;
 const wsPath = '/ws';
 
-app.use(express.static(path.join(__dirname, 'public')));
+const distPath = path.join(__dirname, 'dist');
+const staticPath = fs.existsSync(distPath) ? distPath : path.join(__dirname, 'public');
+const indexFile = path.join(staticPath, 'index.html');
+
+app.use(express.static(staticPath));
+app.get('*', (req, res, next) => {
+  fs.access(indexFile, fs.constants.F_OK, (err) => {
+    if (err) return next();
+    res.sendFile(indexFile);
+  });
+});
 
 const server = createServer(app);
 const wss = new WebSocket.Server({ server, path: wsPath });

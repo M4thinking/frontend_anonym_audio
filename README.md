@@ -12,10 +12,12 @@ cd react-web
 npm install
 npm run dev
 ```
-Pon la URL de tu WebSocket en un `.env`:
+Pon la URL completa de tu WebSocket de comunicación en un `.env`:
 ```
-VITE_WS_URL=ws://localhost:3000/ws
+VITE_WS_URL=ws://localhost:8000/ws/communicate/demo?role=user
+# opcional: VITE_ROOM_ID=demo
 ```
+- El rol (`user`/`scammer`) se ajusta dentro de la UI con el botón sutil **“Ajustar rol”**; el campo desaparece al enviarlo.
 
 ## Build y despliegue en Vercel
 ```bash

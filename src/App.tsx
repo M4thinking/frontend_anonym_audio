@@ -4,12 +4,20 @@ const SAMPLE_RATE = 16000;
 const ROOM_ID = (import.meta.env.VITE_ROOM_ID as string | undefined) || 'demo';
 const DEFAULT_ROLE = 'user';
 const ENV_WS = (import.meta.env.VITE_WS_URL as string | undefined) || 'ws://localhost:8000';
+const ENV_HTTP = (import.meta.env.VITE_HTTP_BASE_URL as string | undefined) || '';
+const ANON_ENDPOINT = (import.meta.env.VITE_ANON_ENDPOINT as string | undefined) || '/anonymize-audio';
 console.log('Using WS URL:', ENV_WS);
 type AudioRefs = {
   audioContext: AudioContext | null;
   mediaStream: MediaStream | null;
   sourceNode: MediaStreamAudioSourceNode | null;
   processorNode: ScriptProcessorNode | null;
+};
+
+type OneShotRecorderState = {
+  recorder: MediaRecorder | null;
+  chunks: Blob[];
+  stream: MediaStream | null;
 };
 
 type AudioEventPayload = {
@@ -45,8 +53,11 @@ export default function App() {
     sourceNode: null,
     processorNode: null
   });
-  // Buffer used for single-shot anonymize recordings
-  const oneShotBuffer = useRef<Int16Array | null>(null);
+  const oneShotRecorderRef = useRef<OneShotRecorderState>({
+    recorder: null,
+    chunks: [],
+    stream: null
+  });
   const [oneShotRecording, setOneShotRecording] = useState(false);
 
   useEffect(() => {
@@ -67,6 +78,17 @@ export default function App() {
     return ENV_WS.includes('/ws/communicate') || ENV_WS.includes('/ws/communication-filtered')
       ? `${ENV_WS.split('?')[0]}?role=${normalizedRole}`
       : `${ENV_WS.replace(/\/$/, '')}${endpoint}/${ROOM_ID}?role=${normalizedRole}`;
+  };
+
+  const buildAnonymizeUrl = () => {
+    if (ENV_HTTP) return `${ENV_HTTP.replace(/\/$/, '')}${ANON_ENDPOINT}`;
+    try {
+      const wsUrl = new URL(ENV_WS);
+      const proto = wsUrl.protocol === 'wss:' ? 'https:' : 'http:';
+      return `${proto}//${wsUrl.host}${ANON_ENDPOINT}`;
+    } catch {
+      return ANON_ENDPOINT;
+    }
   };
 
   const connectSocket = () =>
@@ -194,78 +216,85 @@ export default function App() {
       return;
     }
 
+    if (typeof MediaRecorder === 'undefined') {
+      setStatus('Grabación no soportada');
+      appendLog('MediaRecorder no está disponible en este navegador');
+      return;
+    }
+
     try {
       setStatus('Grabando...');
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
-      await audioContext.resume();
-      const source = audioContext.createMediaStreamSource(mediaStream);
-      const processor = audioContext.createScriptProcessor(2048, 1, 1);
-      const chunks: Int16Array[] = [];
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      const chunks: Blob[] = [];
 
-      processor.onaudioprocess = (ev) => {
-        const input = ev.inputBuffer.getChannelData(0);
-        const pcmBuf = floatTo16BitPCM(input);
-        chunks.push(pcmBuf);
+      recorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) {
+          chunks.push(ev.data);
+        }
       };
 
-      source.connect(processor);
-      processor.connect(audioContext.destination);
+      recorder.onerror = (ev) => {
+        appendLog(`MediaRecorder error: ${(ev as any).error?.message || ev.type}`);
+      };
 
-      audioRefs.current = { ...audioRefs.current, audioContext, mediaStream, sourceNode: source, processorNode: processor };
-      oneShotBuffer.current = null;
+      recorder.onstop = async () => {
+        await handleRecordedChunks(chunks, recorder.mimeType || 'audio/webm');
+      };
+
+      oneShotRecorderRef.current = { recorder, chunks, stream };
+      recorder.start();
       setOneShotRecording(true);
     } catch (err) {
       appendLog(`Error one-shot start: ${String(err)}`);
       setStatus('Error');
+      cleanupOneShotRecorder();
+      setOneShotRecording(false);
     }
   };
 
   const stopOneShotRecordingAndSend = async () => {
     if (!oneShotRecording) return;
     try {
-      setStatus('Deteniendo...');
-      const { processorNode, sourceNode, mediaStream, audioContext } = audioRefs.current;
-      // disconnect nodes and stop tracks
-      processorNode?.disconnect();
-      sourceNode?.disconnect();
-      mediaStream?.getTracks().forEach((t) => t.stop());
+      setStatus('Procesando grabación...');
+      const { recorder, stream } = oneShotRecorderRef.current;
+      if (recorder && recorder.state !== 'inactive') {
+        recorder.stop();
+      }
+      stream?.getTracks().forEach((t) => t.stop());
+    } catch (err) {
+      appendLog(`One-shot error: ${String(err)}`);
+      setStatus('Error');
+    } finally {
+      // cleanup will happen in onstop handler
+    }
+  };
 
-      // collect recorded data from processor by recreating from onaudioprocess chunks is not trivial here
-      // Instead, we re-create by reading from an offline recorder: use MediaRecorder as fallback
-      // Use MediaRecorder to capture a short WAV/PCM blob
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      const blobs: Blob[] = [];
-      recorder.ondataavailable = (e) => blobs.push(e.data);
-      recorder.start();
-      await new Promise((r) => setTimeout(r, 250));
-      recorder.stop();
-      await new Promise((r) => (recorder.onstop = r));
-      stream.getTracks().forEach((t) => t.stop());
-
-      const blob = new Blob(blobs, { type: blobs[0]?.type || 'audio/webm' });
+  async function handleRecordedChunks(chunks: Blob[], mimeType: string) {
+    try {
+      if (!chunks.length) {
+        throw new Error('No se capturó audio');
+      }
+      const blob = new Blob(chunks, { type: mimeType || 'audio/webm' });
       const arrayBuf = await blob.arrayBuffer();
-
-      // If it's webm/ogg/pcm we send raw bytes base64. The backend expects PCM16 audio in base64; many browsers produce webm Opus.
-      // We'll send the recorded blob bytes and let backend handle decoding if supported. If not, this still demonstrates the flow.
       const b64 = arrayBufferToBase64(arrayBuf);
+      const url = buildAnonymizeUrl();
+      appendLog(`POST ${url}`);
 
       setStatus('Enviando a anonimizar...');
-      const resp = await fetch('/anonymize-audio', {
+      const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ audio_b64: b64 })
       });
       if (!resp.ok) {
-        const txt = await resp.text();
-        throw new Error(`Server ${resp.status}: ${txt}`);
+        const txt = await resp.text().catch(() => '');
+        throw new Error(`Server ${resp.status}: ${txt || resp.statusText}`);
       }
       const json = await resp.json();
       const audioB64 = json.audio_b64;
       const audioFormat = json.audio_format || 'mp3';
 
-      // play returned audio
       await playBase64Audio(audioB64, audioFormat);
       setStatus('Listo');
     } catch (err) {
@@ -273,13 +302,15 @@ export default function App() {
       setStatus('Error');
     } finally {
       setOneShotRecording(false);
-      // cleanup audioRefs
-      try {
-        if (audioRefs.current.audioContext) await audioRefs.current.audioContext.close();
-      } catch {}
-      audioRefs.current = { audioContext: null, mediaStream: null, sourceNode: null, processorNode: null };
+      cleanupOneShotRecorder();
     }
-  };
+  }
+
+  function cleanupOneShotRecorder() {
+    const { stream } = oneShotRecorderRef.current;
+    stream?.getTracks().forEach((t) => t.stop());
+    oneShotRecorderRef.current = { recorder: null, chunks: [], stream: null };
+  }
 
   const toggleOneShot = async () => {
     if (!oneShotRecording) await startOneShotRecording();

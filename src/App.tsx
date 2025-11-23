@@ -257,7 +257,7 @@ export default function App() {
     if (!ctx) return;
 
     try {
-      if (payload.flagged && payload.role === 'user') {
+      if (payload.flagged && payload.role === 'scammer') {
         triggerScamAlert();
       }
       await ctx.resume();

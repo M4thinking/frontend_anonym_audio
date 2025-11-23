@@ -4,7 +4,7 @@ const SAMPLE_RATE = 16000;
 const ROOM_ID = (import.meta.env.VITE_ROOM_ID as string | undefined) || 'demo';
 const DEFAULT_ROLE = 'user';
 const ENV_WS = (import.meta.env.VITE_WS_URL as string | undefined) || 'ws://localhost:8000';
-
+console.log('Using WS URL:', ENV_WS);
 type AudioRefs = {
   audioContext: AudioContext | null;
   mediaStream: MediaStream | null;

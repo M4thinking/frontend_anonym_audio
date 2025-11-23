@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simulador de Llamada</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="app">
+    <div class="phone">
+      <div class="status-bar">
+        <div class="status-dots">
+          <span></span><span></span><span></span><span></span><span></span>
+        </div>
+        <span class="status-time" id="statusTime">09:41</span>
+        <div class="status-icons">
+          <span class="wifi"></span>
+          <span class="battery">
+            <span class="battery-level"></span>
+          </span>
+        </div>
+      </div>
+      <div class="earpiece"></div>
+
+      <section class="call-pane">
+        <div class="contact">
+          <div class="avatar" aria-hidden="true">AI</div>
+          <div class="contact-text">
+            <p class="contact-label">Llamada simulada</p>
+            <p class="contact-name">Asistente remoto</p>
+          </div>
+        </div>
+
+        <div class="call-info">
+          <span id="status" class="call-status">Listo</span>
+          <span id="callClock" class="call-clock">00:00</span>
+        </div>
+
+        <div class="waves">
+          <span></span><span></span><span></span><span></span><span></span>
+        </div>
+
+        <div class="controls">
+          <button id="start" class="pill start">
+            <span>Iniciar</span>
+          </button>
+          <button id="stop" class="pill stop" disabled>
+            <span>Colgar</span>
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <section class="log">
+      <div class="log-header">
+        <div>
+          <p class="eyebrow">Actividad</p>
+          <h2>Eventos de la llamada</h2>
+        </div>
+        <span class="status-badge">En vivo</span>
+      </div>
+      <ul id="log"></ul>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

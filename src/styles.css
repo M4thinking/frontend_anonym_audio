@@ -390,6 +390,75 @@ code {
   font-size: 12px;
 }
 
+.anonymizer-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+  padding: 8px 12px;
+  border-radius: 8px;
+  transition: background-color 0.2s ease;
+}
+
+.toggle-label:hover {
+  background-color: rgba(125, 211, 252, 0.08);
+}
+
+.toggle-checkbox {
+  display: none;
+}
+
+.toggle-slider {
+  display: inline-flex;
+  width: 44px;
+  height: 24px;
+  background-color: rgba(148, 163, 184, 0.25);
+  border-radius: 999px;
+  position: relative;
+  transition: background-color 0.3s ease;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.toggle-slider::after {
+  content: '';
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  background-color: #e2e8f0;
+  border-radius: 50%;
+  top: 2px;
+  left: 2px;
+  transition: left 0.3s ease;
+}
+
+.toggle-checkbox:checked + .toggle-slider {
+  background-color: rgba(34, 211, 238, 0.35);
+  border-color: rgba(125, 211, 252, 0.5);
+}
+
+.toggle-checkbox:checked + .toggle-slider::after {
+  left: 22px;
+}
+
+.toggle-checkbox:disabled + .toggle-slider {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.toggle-text {
+  font-size: 14px;
+  color: #cbd5e1;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
 @media (max-width: 720px) {
   .page {
     padding: 48px 14px 70px;

@@ -28,6 +28,7 @@ export default function App() {
   const [roleDraft, setRoleDraft] = useState(DEFAULT_ROLE);
   const [showRoleInput, setShowRoleInput] = useState(false);
   const [scamAlertVisible, setScamAlertVisible] = useState(false);
+  const [useAnonymizer, setUseAnonymizer] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const scamAlertTimeout = useRef<number | null>(null);
   const scamToneRef = useRef<{
@@ -58,16 +59,17 @@ export default function App() {
     console.log(entry);
   };
 
-  const buildWsUrl = (currentRole: string) => {
+  const buildWsUrl = (currentRole: string, useAnon: boolean) => {
     const normalizedRole = (currentRole || 'user').toLowerCase();
-    return ENV_WS.includes('/ws/communicate')
+    const endpoint = useAnon ? '/ws/communication-filtered' : '/ws/communicate';
+    return ENV_WS.includes('/ws/communicate') || ENV_WS.includes('/ws/communication-filtered')
       ? `${ENV_WS.split('?')[0]}?role=${normalizedRole}`
-      : `${ENV_WS.replace(/\/$/, '')}/ws/communicate/${ROOM_ID}?role=${normalizedRole}`;
+      : `${ENV_WS.replace(/\/$/, '')}${endpoint}/${ROOM_ID}?role=${normalizedRole}`;
   };
 
   const connectSocket = () =>
     new Promise<WebSocket>((resolve, reject) => {
-      const ws = new WebSocket(buildWsUrl(role));
+      const ws = new WebSocket(buildWsUrl(role, useAnonymizer));
       wsRef.current = ws;
       ws.binaryType = 'arraybuffer';
 
@@ -344,6 +346,19 @@ export default function App() {
                   </button>
                 </form>
               )}
+            </div>
+            <div className="anonymizer-toggle">
+              <label className="toggle-label">
+                <input
+                  type="checkbox"
+                  className="toggle-checkbox"
+                  checked={useAnonymizer}
+                  onChange={(e) => setUseAnonymizer(e.target.checked)}
+                  disabled={recording}
+                />
+                <span className="toggle-slider"></span>
+                <span className="toggle-text">Anonimizador de audio</span>
+              </label>
             </div>
           </div>
         </header>

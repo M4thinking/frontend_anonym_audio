@@ -208,6 +208,7 @@ export default function App() {
           appendLog(`Salió ${payload.client_id} (${payload.role})`);
           return;
         case 'audio':
+        case 'audio_anonymized':
           return playIncomingAudio(payload as AudioEventPayload);
         default:
           appendLog(`Evento desconocido: ${payload?.event ?? 'n/a'}`);
@@ -272,14 +273,25 @@ export default function App() {
       }
       await ctx.resume();
       const bytes = base64ToUint8(payload.audio_b64);
-      const int16 = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
-      const float32 = new Float32Array(int16.length);
-      for (let i = 0; i < int16.length; i++) {
-        float32[i] = Math.max(-1, Math.min(1, int16[i] / 0x8000));
+      
+      // Check if this is MP3 audio (from anonymizer) or PCM audio
+      const audioFormat = (payload as any).audio_format || 'pcm';
+      
+      let audioBuffer: AudioBuffer;
+      
+      if (audioFormat === 'mp3') {
+        // Decode MP3 using Web Audio API
+        audioBuffer = await ctx.decodeAudioData(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+      } else {
+        // Original PCM format handling
+        const int16 = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
+        const float32 = new Float32Array(int16.length);
+        for (let i = 0; i < int16.length; i++) {
+          float32[i] = Math.max(-1, Math.min(1, int16[i] / 0x8000));
+        }
+        audioBuffer = ctx.createBuffer(1, float32.length, SAMPLE_RATE);
+        audioBuffer.getChannelData(0).set(float32);
       }
-
-      const audioBuffer = ctx.createBuffer(1, float32.length, SAMPLE_RATE);
-      audioBuffer.getChannelData(0).set(float32);
 
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;

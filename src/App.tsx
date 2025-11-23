@@ -111,6 +111,14 @@ export default function App() {
       setStatus('Conectando WS...');
       const ws = await connectSocket();
 
+      // Send initialization message with recording flag
+      const initPayload = {
+        event: 'init_recording',
+        init_recording: useAnonymizer && role === 'user'
+      };
+      ws.send(JSON.stringify(initPayload));
+      appendLog(`Init recording flag: ${initPayload.init_recording}`);
+
       const audioContext = new AudioContext({
         sampleRate: SAMPLE_RATE,
         latencyHint: 'interactive'

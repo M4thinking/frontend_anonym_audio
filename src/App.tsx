@@ -27,7 +27,18 @@ export default function App() {
   const [role, setRole] = useState(DEFAULT_ROLE);
   const [roleDraft, setRoleDraft] = useState(DEFAULT_ROLE);
   const [showRoleInput, setShowRoleInput] = useState(false);
+  const [scamAlertVisible, setScamAlertVisible] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const scamAlertTimeout = useRef<number | null>(null);
+  const scamToneRef = useRef<{
+    ctx: AudioContext | null;
+    oscillator: OscillatorNode | null;
+    gain: GainNode | null;
+  }>({
+    ctx: null,
+    oscillator: null,
+    gain: null
+  });
   const audioRefs = useRef<AudioRefs>({
     audioContext: null,
     mediaStream: null,
@@ -38,6 +49,7 @@ export default function App() {
   useEffect(() => {
     return () => {
       stopCall();
+      stopScamAlert();
     };
   }, []);
 
@@ -159,6 +171,7 @@ export default function App() {
       wsRef.current = null;
     }
     appendLog('Llamada detenida');
+    stopScamAlert();
   };
 
   const handleSocketMessage = async (event: MessageEvent) => {
@@ -197,11 +210,56 @@ export default function App() {
     }
   };
 
+  const stopScamAlert = () => {
+    setScamAlertVisible(false);
+    if (scamAlertTimeout.current) {
+      window.clearTimeout(scamAlertTimeout.current);
+      scamAlertTimeout.current = null;
+    }
+    const { oscillator, gain, ctx } = scamToneRef.current;
+    try {
+      oscillator?.stop();
+      oscillator?.disconnect();
+      gain?.disconnect();
+      ctx?.close();
+    } catch {
+      // ignore cleanup errors
+    }
+    scamToneRef.current = { ctx: null, oscillator: null, gain: null };
+  };
+
+  const triggerScamAlert = async () => {
+    stopScamAlert();
+    setScamAlertVisible(true);
+
+    const ctx = new AudioContext({ latencyHint: 'interactive' });
+    await ctx.resume();
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    oscillator.type = 'square';
+    oscillator.frequency.value = 880;
+    gain.gain.value = 0.05;
+
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+
+    oscillator.start();
+    scamToneRef.current = { ctx, oscillator, gain };
+
+    scamAlertTimeout.current = window.setTimeout(() => {
+      stopScamAlert();
+    }, 5000);
+  };
+
   const playIncomingAudio = async (payload: AudioEventPayload) => {
     const ctx = audioRefs.current.audioContext;
     if (!ctx) return;
 
     try {
+      if (payload.flagged && payload.role === 'user') {
+        triggerScamAlert();
+      }
       await ctx.resume();
       const bytes = base64ToUint8(payload.audio_b64);
       const int16 = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
@@ -242,70 +300,106 @@ export default function App() {
 
   return (
     <div className="page">
-      <div className="shell">
-        <header className="header">
-          <p className="eyebrow">Call simulator · Web</p>
-          <h1>Streaming de voz al WebSocket y eco de vuelta</h1>
-          <p className="lede">
-            Captura tu micrófono, envía audio PCM binario a <code>{buildWsUrl(role)}</code> y reproduce en vivo lo que
-            envíe el servidor. Hecho para desplegar en Vercel.
-          </p>
-          <div className="stealth-config">
-            {!showRoleInput && (
-              <button className="stealth-btn" type="button" onClick={() => setShowRoleInput(true)}>
-                Ajustar rol
+      <div className="layout">
+        {scamAlertVisible && (
+          <div className="scam-alert">
+            <div className="scam-alert-card">
+              <div className="alert-pill">Alerta</div>
+              <h3>Posible estafa</h3>
+              <p>Se detectó actividad sospechosa en la llamada.</p>
+              <button className="ghost-btn" type="button" onClick={stopScamAlert}>
+                Entendido
               </button>
-            )}
-            {showRoleInput && (
-              <form className="stealth-form" onSubmit={handleRoleSubmit}>
-                <input
-                  value={roleDraft}
-                  onChange={(e) => setRoleDraft(e.target.value)}
-                  placeholder="user | scammer"
-                  className="stealth-input"
-                  autoFocus
-                />
-                <button className="stealth-btn" type="submit">
-                  OK
+            </div>
+          </div>
+        )}
+        <header className="masthead">
+          <div className="eyebrow-row">
+            <span className="pill pill-soft">Call simulator · Llamada</span>
+            <span className="pill pill-outline">Rol activo: {role}</span>
+          </div>
+          <h1>Hop - Blindaje activo para tus llamadas</h1>
+          <p className="lede">
+            Protege cada conversación con monitoreo en vivo y alertas inmediatas ante cualquier señal sospechosa. Abre la
+            línea y mantén tu voz segura de punta a punta.
+          </p>
+          <div className="meta">
+            <div className="role-config">
+              {!showRoleInput && (
+                <button className="ghost-btn" type="button" onClick={() => setShowRoleInput(true)}>
+                  Ajustar rol
                 </button>
-              </form>
-            )}
+              )}
+              {showRoleInput && (
+                <form className="role-form" onSubmit={handleRoleSubmit}>
+                  <input
+                    value={roleDraft}
+                    onChange={(e) => setRoleDraft(e.target.value)}
+                    placeholder="user | scammer"
+                    className="role-input"
+                    autoFocus
+                  />
+                  <button className="ghost-btn" type="submit">
+                    Guardar
+                  </button>
+                </form>
+              )}
+            </div>
           </div>
         </header>
 
-        <section className="panel">
-          <div className="controls">
-            <button className="btn start" onClick={startCall} disabled={recording}>
-              {recording ? 'Transmitiendo…' : 'Iniciar'}
-            </button>
-            <button className="btn stop" onClick={stopCall} disabled={!recording}>
-              Detener
-            </button>
-          </div>
+        <div className="content-grid">
+          <section className="card control-card">
+            <div className="card-head">
+              <div>
+                <p className="card-kicker">Sesión</p>
+                <h2>Control principal</h2>
+                <p className="card-copy">Inicia o detén la llamada. Si quieres cambiar de rol, ajusta antes de iniciar.</p>
+              </div>
+              <span className={`status-pill ${recording ? 'on' : 'idle'}`}>{status}</span>
+            </div>
 
-          <div className="status">
-            <span className="status-label">Estado</span>
-            <span className="status-value">{status}</span>
-          </div>
-        </section>
+            <div className="controls">
+              <button className="btn start" onClick={startCall} disabled={recording}>
+                {recording ? 'En llamada…' : '📞 Iniciar'}
+              </button>
+              <button className="btn stop" onClick={stopCall} disabled={!recording}>
+                🚫 Colgar
+              </button>
+            </div>
 
-        <section className="help">
-          <div>
-            <p className="help-title">¿No se escucha?</p>
-            <p className="help-copy">
-              Asegúrate de apuntar <code>VITE_WS_URL</code> a tu servidor y que el navegador permita el micrófono.
-              Algunos navegadores fuerzan otra frecuencia; Chrome suele respetar 16 kHz si se crea el
-              <code>AudioContext</code> con <code>sampleRate: 16000</code>.
-            </p>
-          </div>
-          <div>
-            <p className="help-title">Listo para Vercel</p>
-            <p className="help-copy">
-              Ejecuta <code>npm run build</code> y despliega la carpeta <code>dist</code>. Configura la variable{' '}
-              <code>VITE_WS_URL</code> en tu proyecto de Vercel para apuntar al WebSocket público.
-            </p>
-          </div>
-        </section>
+            <div className="status-note">
+              <div>
+                <p className="status-label">Modo de audio</p>
+                <p className="status-value">Voz clara</p>
+              </div>
+              <div>
+                <p className="status-label">Línea</p>
+                <p className="status-value">{recording ? 'Abierta' : 'En espera'}</p>
+              </div>
+            </div>
+          </section>
+
+          <section className="card info-card">
+            <div className="card-head inline">
+              <div>
+                <p className="card-kicker">Ambiente</p>
+                <h2>Consejos para la llamada</h2>
+              </div>
+              <div className="pill pill-soft subtle">Modo eco</div>
+            </div>
+            <div className="info-grid">
+              <div className="info-item">
+                <p className="info-title">Busca silencio</p>
+                <p className="info-copy">Usa audífonos o un lugar sin ruido para escuchar mejor el retorno.</p>
+              </div>
+              <div className="info-item">
+                <p className="info-title">Habla natural</p>
+                <p className="info-copy">Mantén el micrófono cerca y habla como lo harías en una llamada real.</p>
+              </div>
+            </div>
+          </section>
+        </div>
       </div>
     </div>
   );

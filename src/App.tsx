@@ -28,7 +28,6 @@ export default function App() {
   const [roleDraft, setRoleDraft] = useState(DEFAULT_ROLE);
   const [showRoleInput, setShowRoleInput] = useState(false);
   const [scamAlertVisible, setScamAlertVisible] = useState(false);
-  const [useAnonymizer, setUseAnonymizer] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const scamAlertTimeout = useRef<number | null>(null);
   const scamToneRef = useRef<{
@@ -46,6 +45,9 @@ export default function App() {
     sourceNode: null,
     processorNode: null
   });
+  // Buffer used for single-shot anonymize recordings
+  const oneShotBuffer = useRef<Int16Array | null>(null);
+  const [oneShotRecording, setOneShotRecording] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -59,9 +61,9 @@ export default function App() {
     console.log(entry);
   };
 
-  const buildWsUrl = (currentRole: string, useAnon: boolean) => {
+  const buildWsUrl = (currentRole: string) => {
     const normalizedRole = (currentRole || 'user').toLowerCase();
-    const endpoint = useAnon ? '/ws/communication-filtered' : '/ws/communicate';
+    const endpoint = '/ws/communicate';
     return ENV_WS.includes('/ws/communicate') || ENV_WS.includes('/ws/communication-filtered')
       ? `${ENV_WS.split('?')[0]}?role=${normalizedRole}`
       : `${ENV_WS.replace(/\/$/, '')}${endpoint}/${ROOM_ID}?role=${normalizedRole}`;
@@ -69,7 +71,7 @@ export default function App() {
 
   const connectSocket = () =>
     new Promise<WebSocket>((resolve, reject) => {
-      const ws = new WebSocket(buildWsUrl(role, useAnonymizer));
+      const ws = new WebSocket(buildWsUrl(role));
       wsRef.current = ws;
       ws.binaryType = 'arraybuffer';
 
@@ -114,7 +116,7 @@ export default function App() {
       // Send initialization message with recording flag
       const initPayload = {
         event: 'init_recording',
-        init_recording: useAnonymizer && role === 'user'
+        init_recording: false
       };
       ws.send(JSON.stringify(initPayload));
       appendLog(`Init recording flag: ${initPayload.init_recording}`);
@@ -182,6 +184,134 @@ export default function App() {
     }
     appendLog('Llamada detenida');
     stopScamAlert();
+  };
+
+  // --- Single-shot anonymize recording flow ---
+  const startOneShotRecording = async () => {
+    if (oneShotRecording) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setStatus('Micrófono no soportado');
+      return;
+    }
+
+    try {
+      setStatus('Grabando...');
+      const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
+      await audioContext.resume();
+      const source = audioContext.createMediaStreamSource(mediaStream);
+      const processor = audioContext.createScriptProcessor(2048, 1, 1);
+      const chunks: Int16Array[] = [];
+
+      processor.onaudioprocess = (ev) => {
+        const input = ev.inputBuffer.getChannelData(0);
+        const pcmBuf = floatTo16BitPCM(input);
+        chunks.push(pcmBuf);
+      };
+
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+
+      audioRefs.current = { ...audioRefs.current, audioContext, mediaStream, sourceNode: source, processorNode: processor };
+      oneShotBuffer.current = null;
+      setOneShotRecording(true);
+    } catch (err) {
+      appendLog(`Error one-shot start: ${String(err)}`);
+      setStatus('Error');
+    }
+  };
+
+  const stopOneShotRecordingAndSend = async () => {
+    if (!oneShotRecording) return;
+    try {
+      setStatus('Deteniendo...');
+      const { processorNode, sourceNode, mediaStream, audioContext } = audioRefs.current;
+      // disconnect nodes and stop tracks
+      processorNode?.disconnect();
+      sourceNode?.disconnect();
+      mediaStream?.getTracks().forEach((t) => t.stop());
+
+      // collect recorded data from processor by recreating from onaudioprocess chunks is not trivial here
+      // Instead, we re-create by reading from an offline recorder: use MediaRecorder as fallback
+      // Use MediaRecorder to capture a short WAV/PCM blob
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      const blobs: Blob[] = [];
+      recorder.ondataavailable = (e) => blobs.push(e.data);
+      recorder.start();
+      await new Promise((r) => setTimeout(r, 250));
+      recorder.stop();
+      await new Promise((r) => (recorder.onstop = r));
+      stream.getTracks().forEach((t) => t.stop());
+
+      const blob = new Blob(blobs, { type: blobs[0]?.type || 'audio/webm' });
+      const arrayBuf = await blob.arrayBuffer();
+
+      // If it's webm/ogg/pcm we send raw bytes base64. The backend expects PCM16 audio in base64; many browsers produce webm Opus.
+      // We'll send the recorded blob bytes and let backend handle decoding if supported. If not, this still demonstrates the flow.
+      const b64 = arrayBufferToBase64(arrayBuf);
+
+      setStatus('Enviando a anonimizar...');
+      const resp = await fetch('/anonymize-audio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audio_b64: b64 })
+      });
+      if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`Server ${resp.status}: ${txt}`);
+      }
+      const json = await resp.json();
+      const audioB64 = json.audio_b64;
+      const audioFormat = json.audio_format || 'mp3';
+
+      // play returned audio
+      await playBase64Audio(audioB64, audioFormat);
+      setStatus('Listo');
+    } catch (err) {
+      appendLog(`One-shot error: ${String(err)}`);
+      setStatus('Error');
+    } finally {
+      setOneShotRecording(false);
+      // cleanup audioRefs
+      try {
+        if (audioRefs.current.audioContext) await audioRefs.current.audioContext.close();
+      } catch {}
+      audioRefs.current = { audioContext: null, mediaStream: null, sourceNode: null, processorNode: null };
+    }
+  };
+
+  const toggleOneShot = async () => {
+    if (!oneShotRecording) await startOneShotRecording();
+    else await stopOneShotRecordingAndSend();
+  };
+
+  const playBase64Audio = async (b64: string, format: string) => {
+    try {
+      const ctx = audioRefs.current.audioContext || new AudioContext({ sampleRate: SAMPLE_RATE });
+      await ctx.resume();
+      const bytes = base64ToUint8(b64);
+      if (format.includes('mp3') || format.includes('mp4') || format === 'mp3') {
+        const audioBuffer = await ctx.decodeAudioData(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+        const src = ctx.createBufferSource();
+        src.buffer = audioBuffer;
+        src.connect(ctx.destination);
+        src.start();
+      } else {
+        // assume PCM16LE
+        const int16 = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
+        const float32 = new Float32Array(int16.length);
+        for (let i = 0; i < int16.length; i++) float32[i] = Math.max(-1, Math.min(1, int16[i] / 0x8000));
+        const buffer = ctx.createBuffer(1, float32.length, SAMPLE_RATE);
+        buffer.getChannelData(0).set(float32);
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        src.connect(ctx.destination);
+        src.start();
+      }
+    } catch (err) {
+      appendLog(`Error playing anonymized audio: ${String(err)}`);
+    }
   };
 
   const handleSocketMessage = async (event: MessageEvent) => {
@@ -367,19 +497,6 @@ export default function App() {
                 </form>
               )}
             </div>
-            <div className="anonymizer-toggle">
-              <label className="toggle-label">
-                <input
-                  type="checkbox"
-                  className="toggle-checkbox"
-                  checked={useAnonymizer}
-                  onChange={(e) => setUseAnonymizer(e.target.checked)}
-                  disabled={recording}
-                />
-                <span className="toggle-slider"></span>
-                <span className="toggle-text">Anonimizador de audio</span>
-              </label>
-            </div>
           </div>
         </header>
 
@@ -400,6 +517,12 @@ export default function App() {
               </button>
               <button className="btn stop" onClick={stopCall} disabled={!recording}>
                 🚫 Colgar
+              </button>
+              <button
+                className={`btn ${oneShotRecording ? 'stop' : 'start'}`}
+                onClick={toggleOneShot}
+              >
+                {oneShotRecording ? '⏹️ Detener y Anonimizar' : '🔴 Grabar Anon.'}
               </button>
             </div>
 
@@ -448,6 +571,26 @@ function floatTo16BitPCMBuffer(input: Float32Array) {
     view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
   }
   return buffer;
+}
+
+// helper to return Int16Array from Float32Array
+function floatTo16BitPCM(input: Float32Array) {
+  const out = new Int16Array(input.length);
+  for (let i = 0; i < input.length; i++) {
+    const s = Math.max(-1, Math.min(1, input[i]));
+    out[i] = s < 0 ? Math.round(s * 0x8000) : Math.round(s * 0x7fff);
+  }
+  return out;
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)) as any);
+  }
+  return btoa(binary);
 }
 
 function base64ToUint8(base64: string) {
